@@ -10,7 +10,7 @@ services:
       - key: NODE_VERSION
         value: 20
 
-  - type: static
+  - type: static_site                # ✅ <- fix this line
     name: email-verifier-frontend
     buildCommand: cd frontend && npm install && npm run build
     staticPublishPath: frontend/dist
