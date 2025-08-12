@@ -12,6 +12,7 @@ services:
 
   - type: web
     name: email-verifier-frontend
+    env: static    # ✅ tells Render this is a static site
     buildCommand: cd frontend && npm install && npm run build
     staticPublishPath: frontend/dist
     rootDir: frontend
