@@ -12,8 +12,7 @@ services:
 
   - type: web
     name: email-verifier-frontend
-    env: static                  # ✅ THIS IS THE MAGIC FIX
+    env: static              # ✅ tells Render this is a static site
     rootDir: frontend
-    plan: free
     buildCommand: npm install && npm run build
     staticPublishPath: dist
