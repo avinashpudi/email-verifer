@@ -9,7 +9,7 @@ export default function App() {
     setLoading(true);
     setResult(null);
     try {
-      const res = await fetch('/api/verify-email', {
+      const res = await fetch('https://email-verifier-backend-ysyw.onrender.com/api/verify-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
