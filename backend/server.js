@@ -1,9 +1,13 @@
 const express = require('express');
 const bodyParser = require('body-parser');
+const cors = require('cors'); // ✅ add this
 const verifyEmail = require('./verify');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// ✅ enable CORS for all origins (or restrict it if you want)
+app.use(cors());
 
 app.use(bodyParser.json());
 
