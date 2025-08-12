@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: email-verifier-backend
+    env: node
+    buildCommand: cd backend && npm install
+    startCommand: cd backend && npm start
+    rootDir: backend
+    plan: free
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+
+  - type: static
+    name: email-verifier-frontend
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: frontend/dist
+    rootDir: frontend
+    plan: free
