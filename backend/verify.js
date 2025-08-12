@@ -1,7 +1,7 @@
 const dns = require('dns').promises;
 const { SMTPClient } = require('smtp-client');
 const validator = require('validator');
-const disposableDomains = require('./disposable-domains');
+const disposableDomains = require('./disposable-domains'); // custom or third-party list
 const roleEmails = ['admin', 'info', 'support', 'sales', 'help', 'contact'];
 
 function isDisposable(domain) {
@@ -14,12 +14,14 @@ function isRoleBased(email) {
 }
 
 async function verifyEmail(email) {
+  // Step 1: Validate syntax
   if (!validator.isEmail(email)) {
     return { status: 'invalid', reason: 'Invalid email syntax' };
   }
 
-  const [_, domain] = email.split('@');
+  const [localPart, domain] = email.split('@');
 
+  // Step 2: Filter out disposable and role-based emails
   if (isDisposable(domain)) {
     return { status: 'invalid', reason: 'Disposable email domain' };
   }
@@ -28,6 +30,7 @@ async function verifyEmail(email) {
     return { status: 'risky', reason: 'Role-based email address' };
   }
 
+  // Step 3: Lookup MX records
   let mxRecords;
   try {
     mxRecords = await dns.resolveMx(domain);
@@ -37,6 +40,7 @@ async function verifyEmail(email) {
     return { status: 'invalid', reason: 'No valid MX records' };
   }
 
+  // Step 4: SMTP check across all MX records
   for (let i = 0; i < mxRecords.length; i++) {
     const client = new SMTPClient({
       host: mxRecords[i].exchange,
@@ -49,6 +53,7 @@ async function verifyEmail(email) {
       await client.greet({ hostname: 'yourdomain.com' });
       await client.mail({ from: 'verifier@yourdomain.com' });
 
+      // Catch-all check with a fake address
       const fakeAddress = `random_${Date.now()}@${domain}`;
       let isCatchAll = false;
       try {
@@ -58,6 +63,7 @@ async function verifyEmail(email) {
         isCatchAll = false;
       }
 
+      // Actual email check
       const response = await client.rcpt({ to: email });
       await client.quit();
 
@@ -69,6 +75,7 @@ async function verifyEmail(email) {
     } catch (err) {
       await client.quit().catch(() => {});
       const isLastServer = i === mxRecords.length - 1;
+
       if (err.code === 'SMTPError' && err.responseCode === 550) {
         return { status: 'invalid', reason: 'User not found (550)' };
       } else if (err.code === 'ETIMEDOUT') {
