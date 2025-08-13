@@ -1,7 +1,8 @@
 const dns = require('dns').promises;
 const { SMTPClient } = require('smtp-client');
 const validator = require('validator');
-const disposableDomains = require('./disposable-domains'); // custom or third-party list
+const disposableDomains = require('./disposable-domains');
+
 const roleEmails = ['admin', 'info', 'support', 'sales', 'help', 'contact'];
 
 function isDisposable(domain) {
@@ -13,37 +14,40 @@ function isRoleBased(email) {
   return roleEmails.includes(local);
 }
 
-async function verifyEmail(email) {
-  // Step 1: Validate syntax
+async function verifyEmail(email, options = { checkCatchAll: true }) {
   if (!validator.isEmail(email)) {
     return { status: 'invalid', reason: 'Invalid email syntax' };
   }
 
-  const [localPart, domain] = email.split('@');
+  const [local, domain] = email.split('@');
 
-  // Step 2: Filter out disposable and role-based emails
-  if (isDisposable(domain)) {
-    return { status: 'invalid', reason: 'Disposable email domain' };
+  // Step 1: Run disposable/role check and MX lookup in parallel
+  const [precheck, mxRecords] = await Promise.all([
+    (async () => {
+      if (isDisposable(domain)) return { blocked: true, reason: 'Disposable email domain' };
+      if (isRoleBased(email)) return { blocked: true, reason: 'Role-based email address', risky: true };
+      return { blocked: false };
+    })(),
+    dns.resolveMx(domain).catch(() => null)
+  ]);
+
+  if (precheck.blocked) {
+    return precheck.risky
+      ? { status: 'risky', reason: precheck.reason }
+      : { status: 'invalid', reason: precheck.reason };
   }
 
-  if (isRoleBased(email)) {
-    return { status: 'risky', reason: 'Role-based email address' };
-  }
-
-  // Step 3: Lookup MX records
-  let mxRecords;
-  try {
-    mxRecords = await dns.resolveMx(domain);
-    if (mxRecords.length === 0) throw new Error('No MX records found');
-    mxRecords.sort((a, b) => a.priority - b.priority);
-  } catch (err) {
+  if (!mxRecords || mxRecords.length === 0) {
     return { status: 'invalid', reason: 'No valid MX records' };
   }
 
-  // Step 4: SMTP check across all MX records
-  for (let i = 0; i < mxRecords.length; i++) {
+  // Step 2: Sort and limit to top 2 MX records
+  const sortedMx = mxRecords.sort((a, b) => a.priority - b.priority).slice(0, 2);
+
+  for (let i = 0; i < sortedMx.length; i++) {
+    const mx = sortedMx[i];
     const client = new SMTPClient({
-      host: mxRecords[i].exchange,
+      host: mx.exchange,
       port: 25,
       timeout: 5000,
     });
@@ -53,40 +57,45 @@ async function verifyEmail(email) {
       await client.greet({ hostname: 'yourdomain.com' });
       await client.mail({ from: 'verifier@yourdomain.com' });
 
-      // Catch-all check with a fake address
-      const fakeAddress = `random_${Date.now()}@${domain}`;
+      // Optional: catch-all detection
       let isCatchAll = false;
-      try {
-        await client.rcpt({ to: fakeAddress });
-        isCatchAll = true;
-      } catch (_) {
-        isCatchAll = false;
+      if (options.checkCatchAll) {
+        const fakeAddress = `random_${Date.now()}@${domain}`;
+        try {
+          await client.rcpt({ to: fakeAddress });
+          isCatchAll = true;
+        } catch (_) {
+          isCatchAll = false;
+        }
       }
 
-      // Actual email check
-      const response = await client.rcpt({ to: email });
+      // Actual RCPT TO check
+      const smtpResponse = await client.rcpt({ to: email });
       await client.quit();
 
       return {
         status: isCatchAll ? 'catch_all' : 'valid',
-        smtp: response,
+        smtp: smtpResponse,
         catchAll: isCatchAll,
       };
     } catch (err) {
       await client.quit().catch(() => {});
-      const isLastServer = i === mxRecords.length - 1;
+      const isLast = i === sortedMx.length - 1;
 
       if (err.code === 'SMTPError' && err.responseCode === 550) {
         return { status: 'invalid', reason: 'User not found (550)' };
       } else if (err.code === 'ETIMEDOUT') {
-        if (isLastServer) return { status: 'greylisted', reason: 'Server timeout or greylisted' };
+        if (isLast) return { status: 'greylisted', reason: 'Server timeout or greylisted' };
       } else if (err.code === 'ECONNREFUSED') {
-        if (isLastServer) return { status: 'smtp_blocked', reason: 'SMTP connection refused' };
+        if (isLast) return { status: 'smtp_blocked', reason: 'SMTP connection refused' };
       } else {
-        if (isLastServer) return { status: 'unknown', reason: 'SMTP check failed for unknown reasons' };
+        if (isLast) return { status: 'unknown', reason: 'SMTP check failed for unknown reasons' };
       }
     }
   }
+
+  // Fallback
+  return { status: 'unknown', reason: 'All MX checks failed' };
 }
 
 module.exports = verifyEmail;
